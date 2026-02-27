@@ -137,8 +137,26 @@ from pyrogram import idle
 
 async def main():
     asyncio.create_task(check_mutes())
+    from pyrogram.errors import FloodWait
+from pyrogram import idle
+from aiohttp import web
+
+# Dummy web server for Koyeb health check
+async def health(request):
+    return web.Response(text="Bot is running")
+
+async def run_web():
+    app_web = web.Application()
+    app_web.router.add_get("/", health)
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    await site.start()
+
+async def main():
     print("Restart-Safe Smart Bot Started!")
 
+    # FloodWait safe start
     while True:
         try:
             await app.start()
@@ -147,8 +165,12 @@ async def main():
             print(f"FloodWait: Sleeping for {e.value} seconds")
             await asyncio.sleep(e.value)
 
-    await idle()
+    # Start mute checker AFTER bot started
+    asyncio.create_task(check_mutes())
 
-asyncio.run(main())
+    # Start web server
+    await run_web()
+
+    await idle()
 
 asyncio.run(main())
