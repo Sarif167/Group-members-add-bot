@@ -44,15 +44,7 @@ async def track_members(client, message):
     conn.commit()
 
 # ---------------- FILTER SYSTEM ----------------
-@app.on_message(filters.group & filters.text)
-async def filter_system(client, message):
 
-    # Ignore channel posts
-    if message.sender_chat:
-        return
-
-    if not message.from_user:
-        return
 
     user_id = message.from_user.id
     chat_id = message.chat.id
@@ -66,7 +58,13 @@ async def filter_system(client, message):
 
     patterns = [r"https?://", r"t\.me/", r"@", r"youtube\.com", r"youtu\.be"]
     if any(re.search(p, message.text.lower()) for p in patterns):
-        await punish(chat_id, user_id, message)
+        await punish(chat_id, user_id, m@app.on_message(filters.group & filters.text)
+async def filter_system(client, message):
+
+    print("Message received:", message.text)   # 👈 YEH LINE ADD KARO
+
+    if message.sender_chat:
+        returnessage)
         return
 
     cursor.execute("SELECT added FROM users WHERE user_id=?", (user_id,))
