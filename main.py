@@ -130,6 +130,14 @@ async def main():
     asyncio.create_task(check_mutes())
     print("Restart-Safe Smart Bot Started!")
     await app.start()
-    await app.idle()
+    from pyrogram import idle
+
+async def main():
+    asyncio.create_task(check_mutes())
+    print("Restart-Safe Smart Bot Started!")
+    await app.start()
+    await idle()
+
+asyncio.run(main())
 
 asyncio.run(main())
