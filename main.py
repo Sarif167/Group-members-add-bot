@@ -12,7 +12,6 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 app = Client("smart_force_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-db = mongo["force_bot"]
 users_db = db["users"]
 mute_db = db["mutes"]
 
