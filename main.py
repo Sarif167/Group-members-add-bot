@@ -101,7 +101,6 @@ async def punish(client, chat_id, user_id, message):
 async def check_mutes():
     while True:
         now = int(time.time())
-        mutes = mute_db.find({"until": {"$lte": now}})
 
         async for mute in mutes:
             await app.restrict_chat_member(
