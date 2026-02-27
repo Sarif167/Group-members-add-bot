@@ -2,36 +2,49 @@ import os
 import re
 import time
 import asyncio
-from pyrogram import Client, filters
+import sqlite3
+from pyrogram import Client, filters, idle
 from pyrogram.types import ChatPermissions
+from pyrogram.errors import FloodWait
+from aiohttp import web
 
+# ---------------- CONFIG ----------------
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-MONGO_URI = os.getenv("MONGO_URI")
 
-app = Client("smart_force_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client("force_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+# ---------------- DATABASE ----------------
+conn = sqlite3.connect("data.db", check_same_thread=False)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    added INTEGER DEFAULT 0,
+    warnings INTEGER DEFAULT 0,
+    mute_until INTEGER DEFAULT 0
+)
+""")
+conn.commit()
+
+# ---------------- TRACK ADDED MEMBERS ----------------
 @app.on_message(filters.group & filters.new_chat_members)
 async def track_members(client, message):
     if not message.from_user:
         return
 
-    inviter_id = message.from_user.id
+    inviter = message.from_user.id
+    count = len([m for m in message.new_chat_members if not m.is_bot])
 
-    for member in message.new_chat_members:
-        if member.is_bot or member.is_deleted:
-            continue
+    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (inviter,))
+    cursor.execute("UPDATE users SET added = added + ? WHERE user_id=?", (count, inviter))
+    conn.commit()
 
-        await users_db.update_one(
-            {"_id": inviter_id},
-            {"$addToSet": {"added_members": member.id}},
-            upsert=True
-        )
-
+# ---------------- MESSAGE FILTER ----------------
 @app.on_message(filters.group)
 async def filter_system(client, message):
-
     if not message.from_user:
         return
 
@@ -42,6 +55,10 @@ async def filter_system(client, message):
     if member.status in ["administrator", "creator"]:
         return
 
+    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+
+    # Delete links / forwards
     if message.text:
         patterns = [r"https?://", r"t\.me/", r"@", r"youtube\.com", r"youtu\.be"]
         if any(re.search(p, message.text.lower()) for p in patterns):
@@ -52,19 +69,19 @@ async def filter_system(client, message):
         await punish(client, chat_id, user_id, message)
         return
 
-    user_data = await users_db.find_one({"_id": user_id})
-    count = len(user_data.get("added_members", [])) if user_data else 0
+    # Check added count
+    cursor.execute("SELECT added FROM users WHERE user_id=?", (user_id,))
+    added = cursor.fetchone()[0]
 
-    if count < 4:
+    if added < 4:
         await punish(client, chat_id, user_id, message)
-        return
 
+# ---------------- PUNISH SYSTEM ----------------
 async def punish(client, chat_id, user_id, message):
-
     await message.delete()
 
-    user = await users_db.find_one({"_id": user_id})
-    warnings = user.get("warnings", 0) + 1 if user else 1
+    cursor.execute("SELECT warnings FROM users WHERE user_id=?", (user_id,))
+    warnings = cursor.fetchone()[0] + 1
 
     if warnings >= 2:
         mute_until = int(time.time()) + 1200
@@ -72,40 +89,35 @@ async def punish(client, chat_id, user_id, message):
         await client.restrict_chat_member(
             chat_id,
             user_id,
-            ChatPermissions(),
-            until_date=mute_until
+            ChatPermissions()
         )
 
-        await mute_db.update_one(
-            {"_id": user_id},
-            {"$set": {"chat_id": chat_id, "until": mute_until}},
-            upsert=True
-        )
-
-        await users_db.update_one(
-            {"_id": user_id},
-            {"$set": {"warnings": 0}},
-            upsert=True
-        )
+        cursor.execute("UPDATE users SET warnings=0, mute_until=? WHERE user_id=?",
+                       (mute_until, user_id))
+        conn.commit()
 
         await client.send_message(chat_id, "🔇 User muted for 20 minutes!")
 
     else:
-        await users_db.update_one(
-            {"_id": user_id},
-            {"$set": {"warnings": warnings}},
-            upsert=True
-        )
+        cursor.execute("UPDATE users SET warnings=? WHERE user_id=?",
+                       (warnings, user_id))
+        conn.commit()
+
         await client.send_message(chat_id, f"⚠ Warning {warnings}/2")
 
+# ---------------- AUTO UNMUTE ----------------
 async def check_mutes():
     while True:
         now = int(time.time())
+        cursor.execute("SELECT user_id FROM users WHERE mute_until <= ? AND mute_until > 0", (now,))
+        users = cursor.fetchall()
 
-        async for mute in mutes:
+        for user in users:
+            user_id = user[0]
+
             await app.restrict_chat_member(
-                mute["chat_id"],
-                mute["_id"],
+                message.chat.id,
+                user_id,
                 ChatPermissions(
                     can_send_messages=True,
                     can_send_media_messages=True,
@@ -114,29 +126,14 @@ async def check_mutes():
                 )
             )
 
-            await app.send_message(mute["chat_id"], "🔓 User automatically unmuted!")
-            await mute_db.delete_one({"_id": mute["_id"]})
+            cursor.execute("UPDATE users SET mute_until=0 WHERE user_id=?", (user_id,))
+            conn.commit()
 
         await asyncio.sleep(30)
 
-async def main():
-    asyncio.create_task(check_mutes())
-    print("Restart-Safe Smart Bot Started!")
-    await app.start()
-    from pyrogram import idle
-
-from pyrogram.errors import FloodWait
-from pyrogram import idle
-
-async def main():
-    asyncio.create_task(check_mutes())
-    from pyrogram.errors import FloodWait
-from pyrogram import idle
-from aiohttp import web
-
-# Dummy web server for Koyeb health check
+# ---------------- HEALTH CHECK ----------------
 async def health(request):
-    return web.Response(text="Bot is running")
+    return web.Response(text="Bot running")
 
 async def run_web():
     app_web = web.Application()
@@ -146,24 +143,21 @@ async def run_web():
     site = web.TCPSite(runner, "0.0.0.0", 8080)
     await site.start()
 
+# ---------------- MAIN ----------------
 async def main():
-    print("Restart-Safe Smart Bot Started!")
+    print("Bot Starting...")
 
-    # FloodWait safe start
     while True:
         try:
             await app.start()
             break
         except FloodWait as e:
-            print(f"FloodWait: Sleeping for {e.value} seconds")
+            print(f"FloodWait: Sleeping {e.value}s")
             await asyncio.sleep(e.value)
 
-    # Start mute checker AFTER bot started
     asyncio.create_task(check_mutes())
-
-    # Start web server
     await run_web()
-
+    print("Bot Started Successfully!")
     await idle()
 
 asyncio.run(main())
