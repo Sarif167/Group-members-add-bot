@@ -12,9 +12,6 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 app = Client("smart_force_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-users_db = db["users"]
-mute_db = db["mutes"]
-
 @app.on_message(filters.group & filters.new_chat_members)
 async def track_members(client, message):
     if not message.from_user:
