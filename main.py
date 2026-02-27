@@ -132,10 +132,21 @@ async def main():
     await app.start()
     from pyrogram import idle
 
+from pyrogram.errors import FloodWait
+from pyrogram import idle
+
 async def main():
     asyncio.create_task(check_mutes())
     print("Restart-Safe Smart Bot Started!")
-    await app.start()
+
+    while True:
+        try:
+            await app.start()
+            break
+        except FloodWait as e:
+            print(f"FloodWait: Sleeping for {e.value} seconds")
+            await asyncio.sleep(e.value)
+
     await idle()
 
 asyncio.run(main())
